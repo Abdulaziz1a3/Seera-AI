@@ -1,0 +1,686 @@
+// Prisma Schema for CV-Arabia
+// Production-ready ATS Resume Builder
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ==========================================
+// AUTHENTICATION & USERS
+// ==========================================
+
+model User {
+  id            String    @id @default(cuid())
+  email         String    @unique
+  emailVerified DateTime?
+  passwordHash  String?
+  name          String?
+  image         String?
+  role          UserRole  @default(USER)
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+  deletedAt     DateTime?
+
+  // Relations
+  accounts      Account[]
+  sessions      Session[]
+  profile       UserProfile?
+  resumes       Resume[]
+  jobTargets    JobTarget[]
+  applications  JobApplication[]
+  exports       Export[]
+  subscription  Subscription?
+  usageRecords  UsageRecord[]
+  tickets       SupportTicket[]
+  auditLogs     AuditLog[]        @relation("UserAuditLogs")
+
+  // Two-factor authentication
+  twoFactorEnabled Boolean @default(false)
+  twoFactorSecret  String?
+
+  @@index([email])
+  @@index([createdAt])
+  @@index([role])
+  @@index([deletedAt])
+  @@index([emailVerified])
+}
+
+enum UserRole {
+  USER
+  ADMIN
+  SUPER_ADMIN
+}
+
+model Account {
+  id                String  @id @default(cuid())
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String? @db.Text
+  access_token      String? @db.Text
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String? @db.Text
+  session_state     String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+  @@index([userId])
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+model VerificationToken {
+  identifier String
+  token      String   @unique
+  expires    DateTime
+  type       TokenType @default(EMAIL_VERIFICATION)
+
+  @@unique([identifier, token])
+}
+
+enum TokenType {
+  EMAIL_VERIFICATION
+  PASSWORD_RESET
+  TWO_FACTOR
+}
+
+model UserProfile {
+  id          String   @id @default(cuid())
+  userId      String   @unique
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  // Personal info
+  firstName   String?
+  lastName    String?
+  phone       String?
+  location    String?
+  website     String?
+  linkedinUrl String?
+  
+  // Preferences
+  language    String   @default("en")
+  timezone    String   @default("UTC")
+  dateFormat  String   @default("MM/DD/YYYY")
+  
+  // Notifications
+  emailNotifications Boolean @default(true)
+  marketingEmails    Boolean @default(false)
+  
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+// ==========================================
+// RESUMES
+// ==========================================
+
+model Resume {
+  id          String   @id @default(cuid())
+  userId      String
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  title       String
+  slug        String?
+  targetRole  String?
+  description String?
+  language    String   @default("en")
+  isDefault   Boolean  @default(false)
+  isPublic    Boolean  @default(false)
+  publicSlug  String?  @unique
+  expiresAt   DateTime?
+  
+  // Current version
+  currentVersionId String?
+  
+  // Metadata
+  atsScore         Int?
+  recruiterScore   Int?
+  lastAnalyzedAt   DateTime?
+  
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  deletedAt   DateTime?
+  
+  // Relations
+  versions    ResumeVersion[]
+  sections    ResumeSection[]
+  exports     Export[]
+  jobTargets  JobTargetResume[]
+  
+  @@index([userId])
+  @@index([publicSlug])
+  @@index([createdAt])
+}
+
+model ResumeVersion {
+  id        String   @id @default(cuid())
+  resumeId  String
+  resume    Resume   @relation(fields: [resumeId], references: [id], onDelete: Cascade)
+  
+  version   Int
+  name      String?
+  snapshot  Json     // Full resume data snapshot
+  changeLog String?
+  
+  createdAt DateTime @default(now())
+  
+  @@unique([resumeId, version])
+  @@index([resumeId])
+}
+
+model ResumeSection {
+  id        String      @id @default(cuid())
+  resumeId  String
+  resume    Resume      @relation(fields: [resumeId], references: [id], onDelete: Cascade)
+  
+  type      SectionType
+  title     String      // Customizable title
+  order     Int
+  isVisible Boolean     @default(true)
+  content   Json        // Section-specific content
+  
+  createdAt DateTime    @default(now())
+  updatedAt DateTime    @updatedAt
+  
+  @@index([resumeId])
+  @@index([type])
+}
+
+enum SectionType {
+  CONTACT
+  SUMMARY
+  EXPERIENCE
+  EDUCATION
+  SKILLS
+  PROJECTS
+  CERTIFICATIONS
+  AWARDS
+  PUBLICATIONS
+  VOLUNTEERING
+  LANGUAGES
+  REFERENCES
+  CUSTOM
+}
+
+// ==========================================
+// JOB TARGETING
+// ==========================================
+
+model JobTarget {
+  id          String   @id @default(cuid())
+  userId      String
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  title       String
+  company     String?
+  description String?  @db.Text
+  url         String?
+  
+  // Extracted data
+  extractedSkills    Json?
+  extractedRequirements Json?
+  keywords           String[]
+  
+  // Match analysis
+  matchScore    Int?
+  analysisData  Json?
+  analyzedAt    DateTime?
+  
+  // Generated content
+  tailoredSummary    String? @db.Text
+  coverLetter        String? @db.Text
+  linkedinSummary    String? @db.Text
+  recruiterEmail     String? @db.Text
+  
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  
+  // Relations
+  resumes     JobTargetResume[]
+  application JobApplication?
+  
+  @@index([userId])
+  @@index([createdAt])
+}
+
+model JobTargetResume {
+  id          String    @id @default(cuid())
+  jobTargetId String
+  jobTarget   JobTarget @relation(fields: [jobTargetId], references: [id], onDelete: Cascade)
+  resumeId    String
+  resume      Resume    @relation(fields: [resumeId], references: [id], onDelete: Cascade)
+  
+  // Tailored version
+  tailoredContent Json?
+  matchScore      Int?
+  
+  createdAt DateTime @default(now())
+  
+  @@unique([jobTargetId, resumeId])
+}
+
+// ==========================================
+// JOB APPLICATIONS TRACKER
+// ==========================================
+
+model JobApplication {
+  id          String   @id @default(cuid())
+  userId      String
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  // Job info
+  jobTitle    String
+  company     String
+  location    String?
+  salary      String?
+  url         String?
+  
+  // Application details
+  status      ApplicationStatus @default(SAVED)
+  appliedAt   DateTime?
+  source      String?           // Where you found the job
+  
+  // Related job target
+  jobTargetId String?  @unique
+  jobTarget   JobTarget? @relation(fields: [jobTargetId], references: [id])
+  
+  // Tracking
+  followUpDate DateTime?
+  responseDate DateTime?
+  interviewDate DateTime?
+  
+  // Notes and contacts
+  notes       ApplicationNote[]
+  contacts    Contact[]
+  
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  
+  @@index([userId])
+  @@index([status])
+  @@index([appliedAt])
+}
+
+enum ApplicationStatus {
+  SAVED
+  APPLIED
+  SCREENING
+  INTERVIEW
+  OFFER
+  ACCEPTED
+  REJECTED
+  WITHDRAWN
+}
+
+model ApplicationNote {
+  id            String         @id @default(cuid())
+  applicationId String
+  application   JobApplication @relation(fields: [applicationId], references: [id], onDelete: Cascade)
+  
+  content       String @db.Text
+  type          NoteType @default(GENERAL)
+  
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+  
+  @@index([applicationId])
+}
+
+enum NoteType {
+  GENERAL
+  INTERVIEW
+  FOLLOW_UP
+  FEEDBACK
+  RESEARCH
+}
+
+model Contact {
+  id            String         @id @default(cuid())
+  applicationId String
+  application   JobApplication @relation(fields: [applicationId], references: [id], onDelete: Cascade)
+  
+  name          String
+  title         String?
+  email         String?
+  phone         String?
+  linkedinUrl   String?
+  notes         String?
+  
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+  
+  @@index([applicationId])
+}
+
+// ==========================================
+// EXPORTS & SHARING
+// ==========================================
+
+model Export {
+  id        String       @id @default(cuid())
+  userId    String
+  user      User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  resumeId  String
+  resume    Resume       @relation(fields: [resumeId], references: [id], onDelete: Cascade)
+  
+  format    ExportFormat
+  template  String
+  fileName  String
+  fileUrl   String?
+  fileSize  Int?
+  
+  // Export options
+  options   Json?
+  
+  createdAt DateTime @default(now())
+  expiresAt DateTime?
+  
+  @@index([userId])
+  @@index([resumeId])
+}
+
+enum ExportFormat {
+  PDF
+  DOCX
+  TXT
+  JSON
+}
+
+// ==========================================
+// SUBSCRIPTIONS & BILLING
+// ==========================================
+
+model Subscription {
+  id              String   @id @default(cuid())
+  userId          String   @unique
+  user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  plan            PlanType @default(FREE)
+  status          SubscriptionStatus @default(ACTIVE)
+
+  // Stripe
+  stripeCustomerId     String? @unique
+  stripeSubscriptionId String? @unique
+  stripePriceId        String?
+
+  // Billing cycle
+  currentPeriodStart DateTime?
+  currentPeriodEnd   DateTime?
+  cancelAtPeriodEnd  Boolean @default(false)
+
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@index([stripeCustomerId])
+  @@index([stripeSubscriptionId])
+  @@index([status])
+  @@index([plan])
+  @@index([currentPeriodEnd])
+}
+
+enum PlanType {
+  FREE
+  PRO
+  ENTERPRISE
+}
+
+enum SubscriptionStatus {
+  ACTIVE
+  PAST_DUE
+  CANCELED
+  UNPAID
+  TRIALING
+}
+
+model UsageRecord {
+  id        String    @id @default(cuid())
+  userId    String
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  type      UsageType
+  count     Int       @default(1)
+  metadata  Json?
+
+  createdAt DateTime  @default(now())
+
+  @@index([userId])
+  @@index([type])
+  @@index([createdAt])
+  @@index([userId, type, createdAt])
+}
+
+enum UsageType {
+  AI_GENERATION
+  EXPORT_PDF
+  EXPORT_DOCX
+  RESUME_CREATE
+  JD_ANALYSIS
+}
+
+// ==========================================
+// CONTENT MANAGEMENT
+// ==========================================
+
+model Template {
+  id          String   @id @default(cuid())
+  name        String
+  slug        String   @unique
+  description String?
+  thumbnail   String?
+  
+  // Template configuration
+  config      Json
+  styles      String?  @db.Text // CSS
+  isActive    Boolean  @default(true)
+  isPremium   Boolean  @default(false)
+  
+  // Stats
+  usageCount  Int      @default(0)
+  
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  
+  @@index([slug])
+  @@index([isActive])
+}
+
+model BlogPost {
+  id          String   @id @default(cuid())
+  
+  title       String
+  slug        String   @unique
+  excerpt     String?
+  content     String   @db.Text
+  coverImage  String?
+  
+  // SEO
+  metaTitle       String?
+  metaDescription String?
+  
+  // Status
+  status      PostStatus @default(DRAFT)
+  publishedAt DateTime?
+  
+  // Author
+  authorId    String?
+  authorName  String?
+  
+  // Categorization
+  category    String?
+  tags        String[]
+  
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  
+  @@index([slug])
+  @@index([status])
+  @@index([publishedAt])
+}
+
+enum PostStatus {
+  DRAFT
+  PUBLISHED
+  ARCHIVED
+}
+
+model KnowledgeBaseArticle {
+  id          String   @id @default(cuid())
+  
+  title       String
+  slug        String   @unique
+  content     String   @db.Text
+  
+  category    String
+  order       Int      @default(0)
+  isPublished Boolean  @default(true)
+  
+  // Stats
+  helpfulCount    Int @default(0)
+  notHelpfulCount Int @default(0)
+  
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  
+  @@index([slug])
+  @@index([category])
+}
+
+// ==========================================
+// SUPPORT
+// ==========================================
+
+model SupportTicket {
+  id        String       @id @default(cuid())
+  userId    String?
+  user      User?        @relation(fields: [userId], references: [id], onDelete: SetNull)
+  
+  // Ticket info
+  subject   String
+  message   String       @db.Text
+  email     String
+  
+  status    TicketStatus @default(OPEN)
+  priority  TicketPriority @default(MEDIUM)
+  category  String?
+  
+  // Responses
+  responses TicketResponse[]
+  
+  // Tracking
+  assignedTo   String?
+  resolvedAt   DateTime?
+  firstResponseAt DateTime?
+  
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  
+  @@index([userId])
+  @@index([status])
+  @@index([createdAt])
+}
+
+enum TicketStatus {
+  OPEN
+  IN_PROGRESS
+  WAITING_ON_CUSTOMER
+  RESOLVED
+  CLOSED
+}
+
+enum TicketPriority {
+  LOW
+  MEDIUM
+  HIGH
+  URGENT
+}
+
+model TicketResponse {
+  id        String        @id @default(cuid())
+  ticketId  String
+  ticket    SupportTicket @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  
+  message   String        @db.Text
+  isStaff   Boolean       @default(false)
+  authorId  String?
+  authorName String?
+  
+  createdAt DateTime      @default(now())
+  
+  @@index([ticketId])
+}
+
+// ==========================================
+// ADMIN & AUDIT
+// ==========================================
+
+model AuditLog {
+  id        String   @id @default(cuid())
+  userId    String?
+  user      User?    @relation("UserAuditLogs", fields: [userId], references: [id], onDelete: SetNull)
+  
+  action    String
+  entity    String
+  entityId  String?
+  details   Json?
+  ipAddress String?
+  userAgent String?
+  
+  createdAt DateTime @default(now())
+  
+  @@index([userId])
+  @@index([action])
+  @@index([entity])
+  @@index([createdAt])
+}
+
+model FeatureFlag {
+  id          String   @id @default(cuid())
+  key         String   @unique
+  name        String
+  description String?
+  
+  enabled     Boolean  @default(false)
+  percentage  Int      @default(100) // For gradual rollouts
+  
+  // Targeting
+  enabledFor  String[] // User IDs
+  disabledFor String[] // User IDs
+  
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  
+  @@index([key])
+}
+
+// ==========================================
+// RATE LIMITING & SECURITY
+// ==========================================
+
+model RateLimitRecord {
+  id        String   @id @default(cuid())
+  key       String   // IP or user ID
+  endpoint  String
+  count     Int      @default(1)
+  windowStart DateTime
+  
+  @@unique([key, endpoint, windowStart])
+  @@index([key])
+  @@index([windowStart])
+}

@@ -1,0 +1,295 @@
+// Email Service for Seera AI
+// Production-ready email integration using Resend
+
+import { Resend } from 'resend';
+import { logger } from './logger';
+
+// Initialize Resend client
+const resend = process.env.RESEND_API_KEY
+    ? new Resend(process.env.RESEND_API_KEY)
+    : null;
+
+const FROM_EMAIL = process.env.EMAIL_FROM || 'Seera AI <noreply@seera-ai.com>';
+const APP_NAME = process.env.NEXT_PUBLIC_APP_NAME || 'Seera AI';
+const APP_URL = process.env.NEXT_PUBLIC_APP_URL || process.env.NEXTAUTH_URL || 'http://localhost:3000';
+
+// Check if email service is configured
+export function isEmailConfigured(): boolean {
+    return resend !== null;
+}
+
+// Email templates
+function getBaseTemplate(content: string): string {
+    return `
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>${APP_NAME}</title>
+</head>
+<body style="margin: 0; padding: 0; background-color: #f4f4f5; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;">
+    <table role="presentation" style="width: 100%; border-collapse: collapse;">
+        <tr>
+            <td align="center" style="padding: 40px 20px;">
+                <table role="presentation" style="width: 100%; max-width: 600px; border-collapse: collapse; background-color: #ffffff; border-radius: 12px; box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);">
+                    <!-- Header -->
+                    <tr>
+                        <td style="padding: 32px 40px; text-align: center; border-bottom: 1px solid #e4e4e7;">
+                            <div style="display: inline-flex; align-items: center; gap: 8px;">
+                                <div style="width: 40px; height: 40px; background: linear-gradient(135deg, #3b82f6 0%, #1d4ed8 100%); border-radius: 8px; display: inline-block;"></div>
+                                <span style="font-size: 24px; font-weight: 700; color: #18181b;">${APP_NAME}</span>
+                            </div>
+                        </td>
+                    </tr>
+                    <!-- Content -->
+                    <tr>
+                        <td style="padding: 40px;">
+                            ${content}
+                        </td>
+                    </tr>
+                    <!-- Footer -->
+                    <tr>
+                        <td style="padding: 24px 40px; background-color: #f4f4f5; border-radius: 0 0 12px 12px;">
+                            <p style="margin: 0; font-size: 12px; color: #71717a; text-align: center;">
+                                This email was sent by ${APP_NAME}.<br>
+                                If you didn't request this, you can safely ignore this email.
+                            </p>
+                            <p style="margin: 16px 0 0 0; font-size: 12px; color: #71717a; text-align: center;">
+                                <a href="${APP_URL}" style="color: #3b82f6; text-decoration: none;">${APP_URL.replace(/^https?:\/\//, '')}</a>
+                            </p>
+                        </td>
+                    </tr>
+                </table>
+            </td>
+        </tr>
+    </table>
+</body>
+</html>
+    `.trim();
+}
+
+function getButtonStyle(): string {
+    return 'display: inline-block; padding: 14px 28px; background: linear-gradient(135deg, #3b82f6 0%, #1d4ed8 100%); color: #ffffff; text-decoration: none; border-radius: 8px; font-weight: 600; font-size: 14px;';
+}
+
+// Email sending functions
+interface EmailResult {
+    success: boolean;
+    messageId?: string;
+    error?: string;
+}
+
+export async function sendVerificationEmail(
+    email: string,
+    token: string,
+    name?: string
+): Promise<EmailResult> {
+    if (!resend) {
+        logger.warn('Email service not configured - skipping verification email', { email });
+        return { success: false, error: 'Email service not configured' };
+    }
+
+    const verifyUrl = `${APP_URL}/auth/verify-email?token=${token}`;
+    const greeting = name ? `Hi ${name.split(' ')[0]},` : 'Hi there,';
+
+    const content = `
+        <h1 style="margin: 0 0 16px 0; font-size: 24px; font-weight: 700; color: #18181b;">Verify your email address</h1>
+        <p style="margin: 0 0 24px 0; font-size: 16px; color: #3f3f46; line-height: 1.6;">
+            ${greeting}<br><br>
+            Thanks for signing up for ${APP_NAME}! Please verify your email address to get started with building your professional resume.
+        </p>
+        <div style="text-align: center; margin: 32px 0;">
+            <a href="${verifyUrl}" style="${getButtonStyle()}">Verify Email Address</a>
+        </div>
+        <p style="margin: 24px 0 0 0; font-size: 14px; color: #71717a; line-height: 1.6;">
+            Or copy and paste this link into your browser:<br>
+            <a href="${verifyUrl}" style="color: #3b82f6; word-break: break-all;">${verifyUrl}</a>
+        </p>
+        <p style="margin: 24px 0 0 0; font-size: 14px; color: #71717a;">
+            This link expires in 24 hours.
+        </p>
+    `;
+
+    try {
+        const { data, error } = await resend.emails.send({
+            from: FROM_EMAIL,
+            to: email,
+            subject: `Verify your email - ${APP_NAME}`,
+            html: getBaseTemplate(content),
+        });
+
+        if (error) {
+            logger.error('Failed to send verification email', { email, error });
+            return { success: false, error: error.message };
+        }
+
+        logger.info('Verification email sent', { email, messageId: data?.id });
+        return { success: true, messageId: data?.id };
+    } catch (error) {
+        logger.error('Email sending failed', { email, error: error as Error });
+        return { success: false, error: 'Failed to send email' };
+    }
+}
+
+export async function sendPasswordResetEmail(
+    email: string,
+    token: string,
+    name?: string
+): Promise<EmailResult> {
+    if (!resend) {
+        logger.warn('Email service not configured - skipping password reset email', { email });
+        return { success: false, error: 'Email service not configured' };
+    }
+
+    const resetUrl = `${APP_URL}/auth/reset-password?token=${token}`;
+    const greeting = name ? `Hi ${name.split(' ')[0]},` : 'Hi there,';
+
+    const content = `
+        <h1 style="margin: 0 0 16px 0; font-size: 24px; font-weight: 700; color: #18181b;">Reset your password</h1>
+        <p style="margin: 0 0 24px 0; font-size: 16px; color: #3f3f46; line-height: 1.6;">
+            ${greeting}<br><br>
+            We received a request to reset your password. Click the button below to create a new password.
+        </p>
+        <div style="text-align: center; margin: 32px 0;">
+            <a href="${resetUrl}" style="${getButtonStyle()}">Reset Password</a>
+        </div>
+        <p style="margin: 24px 0 0 0; font-size: 14px; color: #71717a; line-height: 1.6;">
+            Or copy and paste this link into your browser:<br>
+            <a href="${resetUrl}" style="color: #3b82f6; word-break: break-all;">${resetUrl}</a>
+        </p>
+        <p style="margin: 24px 0 0 0; font-size: 14px; color: #71717a;">
+            This link expires in 1 hour. If you didn't request this, you can safely ignore this email.
+        </p>
+    `;
+
+    try {
+        const { data, error } = await resend.emails.send({
+            from: FROM_EMAIL,
+            to: email,
+            subject: `Reset your password - ${APP_NAME}`,
+            html: getBaseTemplate(content),
+        });
+
+        if (error) {
+            logger.error('Failed to send password reset email', { email, error });
+            return { success: false, error: error.message };
+        }
+
+        logger.info('Password reset email sent', { email, messageId: data?.id });
+        return { success: true, messageId: data?.id };
+    } catch (error) {
+        logger.error('Email sending failed', { email, error: error as Error });
+        return { success: false, error: 'Failed to send email' };
+    }
+}
+
+export async function sendWelcomeEmail(
+    email: string,
+    name?: string
+): Promise<EmailResult> {
+    if (!resend) {
+        logger.warn('Email service not configured - skipping welcome email', { email });
+        return { success: false, error: 'Email service not configured' };
+    }
+
+    const dashboardUrl = `${APP_URL}/dashboard`;
+    const greeting = name ? `Welcome, ${name.split(' ')[0]}!` : 'Welcome!';
+
+    const content = `
+        <h1 style="margin: 0 0 16px 0; font-size: 24px; font-weight: 700; color: #18181b;">${greeting}</h1>
+        <p style="margin: 0 0 24px 0; font-size: 16px; color: #3f3f46; line-height: 1.6;">
+            Your email has been verified and your account is ready. You can now start building your professional, ATS-optimized resume with AI assistance.
+        </p>
+        <div style="background-color: #f4f4f5; border-radius: 8px; padding: 24px; margin: 24px 0;">
+            <h2 style="margin: 0 0 16px 0; font-size: 16px; font-weight: 600; color: #18181b;">Get started:</h2>
+            <ul style="margin: 0; padding: 0 0 0 20px; color: #3f3f46; line-height: 1.8;">
+                <li>Create your first resume using AI-powered suggestions</li>
+                <li>Choose from professional templates optimized for ATS</li>
+                <li>Get career advice tailored to Saudi Arabia & GCC markets</li>
+                <li>Practice interviews with AI coaching</li>
+            </ul>
+        </div>
+        <div style="text-align: center; margin: 32px 0;">
+            <a href="${dashboardUrl}" style="${getButtonStyle()}">Go to Dashboard</a>
+        </div>
+    `;
+
+    try {
+        const { data, error } = await resend.emails.send({
+            from: FROM_EMAIL,
+            to: email,
+            subject: `Welcome to ${APP_NAME} - Let's build your resume!`,
+            html: getBaseTemplate(content),
+        });
+
+        if (error) {
+            logger.error('Failed to send welcome email', { email, error });
+            return { success: false, error: error.message };
+        }
+
+        logger.info('Welcome email sent', { email, messageId: data?.id });
+        return { success: true, messageId: data?.id };
+    } catch (error) {
+        logger.error('Email sending failed', { email, error: error as Error });
+        return { success: false, error: 'Failed to send email' };
+    }
+}
+
+export async function sendSubscriptionConfirmation(
+    email: string,
+    plan: string,
+    name?: string
+): Promise<EmailResult> {
+    if (!resend) {
+        logger.warn('Email service not configured - skipping subscription email', { email });
+        return { success: false, error: 'Email service not configured' };
+    }
+
+    const billingUrl = `${APP_URL}/dashboard/settings?tab=billing`;
+    const greeting = name ? `Hi ${name.split(' ')[0]},` : 'Hi there,';
+
+    const content = `
+        <h1 style="margin: 0 0 16px 0; font-size: 24px; font-weight: 700; color: #18181b;">Subscription Confirmed!</h1>
+        <p style="margin: 0 0 24px 0; font-size: 16px; color: #3f3f46; line-height: 1.6;">
+            ${greeting}<br><br>
+            Thank you for upgrading to <strong>${plan}</strong>! Your subscription is now active and you have access to all premium features.
+        </p>
+        <div style="background-color: #ecfdf5; border: 1px solid #10b981; border-radius: 8px; padding: 24px; margin: 24px 0;">
+            <p style="margin: 0; color: #047857; font-weight: 600;">
+                Your ${plan} plan is now active
+            </p>
+        </div>
+        <div style="text-align: center; margin: 32px 0;">
+            <a href="${billingUrl}" style="${getButtonStyle()}">View Subscription</a>
+        </div>
+    `;
+
+    try {
+        const { data, error } = await resend.emails.send({
+            from: FROM_EMAIL,
+            to: email,
+            subject: `Subscription Confirmed - ${APP_NAME} ${plan}`,
+            html: getBaseTemplate(content),
+        });
+
+        if (error) {
+            logger.error('Failed to send subscription email', { email, error });
+            return { success: false, error: error.message };
+        }
+
+        logger.info('Subscription confirmation email sent', { email, plan, messageId: data?.id });
+        return { success: true, messageId: data?.id };
+    } catch (error) {
+        logger.error('Email sending failed', { email, error: error as Error });
+        return { success: false, error: 'Failed to send email' };
+    }
+}
+
+export default {
+    isEmailConfigured,
+    sendVerificationEmail,
+    sendPasswordResetEmail,
+    sendWelcomeEmail,
+    sendSubscriptionConfirmation,
+};

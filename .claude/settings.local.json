@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(find \"C:\\\\Users\\\\OSHCIO\\\\OneDrive - Olayan Financing Company\\\\Desktop\\\\CV-Arabia\\\\src\\\\app\\\\api\" -type f -name \"route.ts\" -exec sh -c 'echo \"\"=== {} ===\"\" && head -20 \"\"{}\"\"' ;)",
+      "Bash(npm run lint)",
+      "Bash(npx tsc:*)"
+    ]
+  }
+}
